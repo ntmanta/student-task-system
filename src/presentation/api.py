@@ -1,7 +1,5 @@
-"""Flask REST API: translates HTTP requests into service calls."""
-from datetime import date
-
-from flask import Flask, jsonify, request
+"""Presentation layer: Flask REST API and the web page."""
+from flask import Flask, jsonify, render_template, request
 
 from src.application.services import StudentService, SubmissionService, TaskService
 from src.domain.errors import DuplicateError, NotFoundError, ValidationError
@@ -13,7 +11,7 @@ from src.infrastructure.repositories import (
 )
 
 
-def student_json(s):
+def student_dict(s):
     return {
         "id": s.id,
         "student_number": s.student_number,
@@ -23,7 +21,7 @@ def student_json(s):
     }
 
 
-def task_json(t):
+def task_dict(t):
     return {
         "id": t.id,
         "title": t.title,
@@ -32,7 +30,7 @@ def task_json(t):
     }
 
 
-def submission_json(s):
+def submission_dict(s):
     return {
         "id": s.id,
         "student_id": s.student_id,
@@ -42,17 +40,17 @@ def submission_json(s):
     }
 
 
-def create_app(db_path="student_task.db"):
-    app = Flask(__name__)
-    db = Database(db_path)
+def create_app(db_path="student_tasks.db"):
+    app = Flask(__name__, template_folder="templates")
 
+    db = Database(db_path)
     student_repo = StudentRepository(db)
     task_repo = TaskRepository(db)
     submission_repo = SubmissionRepository(db)
 
     students = StudentService(student_repo)
     tasks = TaskService(task_repo)
-    submissions = SubmissionService(student_repo, task_repo, submission_repo)
+    submissions = SubmissionService(submission_repo, student_repo, task_repo)
 
     @app.errorhandler(ValidationError)
     def handle_validation(e):
@@ -66,77 +64,64 @@ def create_app(db_path="student_task.db"):
     def handle_duplicate(e):
         return jsonify({"error": str(e)}), 409
 
-    @app.get("/")
-    def index():
-        return jsonify({"message": "Student Task System API"})
+    @app.route("/")
+    def home():
+        return render_template("index.html")
 
-    # ---- Students ----
-    @app.post("/students")
-    def add_student():
-        d = request.get_json(silent=True) or {}
-        s = students.add_student(
-            d.get("student_number"), d.get("name"), d.get("email"), d.get("course")
-        )
-        return jsonify(student_json(s)), 201
-
-    @app.get("/students")
+    # ---------- Students ----------
+    @app.route("/api/students", methods=["GET"])
     def list_students():
-        return jsonify([student_json(s) for s in students.list_students()])
+        return jsonify([student_dict(s) for s in students.list_students()])
 
-    @app.get("/students/<int:student_id>")
+    @app.route("/api/students", methods=["POST"])
+    def add_student():
+        data = request.get_json(silent=True) or {}
+        return jsonify(student_dict(students.add_student(data))), 201
+
+    @app.route("/api/students/<int:student_id>", methods=["GET"])
     def get_student(student_id):
-        return jsonify(student_json(students.get_student(student_id)))
+        return jsonify(student_dict(students.get_student(student_id)))
 
-    @app.put("/students/<int:student_id>")
+    @app.route("/api/students/<int:student_id>", methods=["PUT"])
     def update_student(student_id):
-        d = request.get_json(silent=True) or {}
-        s = students.update_student(
-            student_id,
-            d.get("student_number"),
-            d.get("name"),
-            d.get("email"),
-            d.get("course"),
-        )
-        return jsonify(student_json(s))
+        data = request.get_json(silent=True) or {}
+        return jsonify(student_dict(students.update_student(student_id, data)))
 
-    @app.delete("/students/<int:student_id>")
+    @app.route("/api/students/<int:student_id>", methods=["DELETE"])
     def delete_student(student_id):
         students.delete_student(student_id)
-        return "", 204
+        return jsonify({"message": "Student deleted"})
 
-    # ---- Tasks ----
-    @app.post("/tasks")
-    def add_task():
-        d = request.get_json(silent=True) or {}
-        t = tasks.add_task(d.get("title"), d.get("deadline"), d.get("description", ""))
-        return jsonify(task_json(t)), 201
-
-    @app.get("/tasks")
+    # ---------- Tasks ----------
+    @app.route("/api/tasks", methods=["GET"])
     def list_tasks():
-        return jsonify([task_json(t) for t in tasks.list_tasks()])
+        return jsonify([task_dict(t) for t in tasks.list_tasks()])
 
-    @app.get("/tasks/<int:task_id>")
-    def get_task(task_id):
-        return jsonify(task_json(tasks.get_task(task_id)))
+    @app.route("/api/tasks", methods=["POST"])
+    def add_task():
+        data = request.get_json(silent=True) or {}
+        return jsonify(task_dict(tasks.add_task(data))), 201
 
-    @app.delete("/tasks/<int:task_id>")
+    @app.route("/api/tasks/<int:task_id>", methods=["DELETE"])
     def delete_task(task_id):
         tasks.delete_task(task_id)
-        return "", 204
+        return jsonify({"message": "Task deleted"})
 
-    # ---- Submissions and report ----
-    @app.post("/submissions")
-    def submit():
-        d = request.get_json(silent=True) or {}
-        sub = submissions.submit(
-            d.get("student_id"),
-            d.get("task_id"),
-            d.get("submitted_on") or date.today().isoformat(),
+    # ---------- Submissions ----------
+    @app.route("/api/submissions", methods=["POST"])
+    def record_submission():
+        data = request.get_json(silent=True) or {}
+        sub = submissions.record_submission(
+            data.get("student_id"), data.get("task_id"), data.get("submitted_on")
         )
-        return jsonify(submission_json(sub)), 201
+        return jsonify(submission_dict(sub)), 201
 
-    @app.get("/tasks/<int:task_id>/report")
-    def report(task_id):
-        return jsonify(submissions.report(task_id))
+    @app.route("/api/tasks/<int:task_id>/submissions", methods=["GET"])
+    def task_submissions(task_id):
+        return jsonify([submission_dict(s) for s in submissions.list_for_task(task_id)])
+
+    @app.route("/api/tasks/<int:task_id>/report", methods=["GET"])
+    def task_report(task_id):
+        return jsonify(submissions.task_report(task_id))
 
     return app
