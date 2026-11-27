@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Student Information and Task Management System</title>
+<style>
+  body { font-family: Arial, sans-serif; margin: 0; background: #f4f6fb; color: #222; }
+  header { background: #4f46e5; color: #fff; padding: 16px 24px; }
+  main { max-width: 1000px; margin: 20px auto; padding: 0 16px; }
+  section { background: #fff; border-radius: 8px; padding: 16px; margin-bottom: 20px; box-shadow: 0 1px 4px rgba(0,0,0,.1); }
+  input, select, button { padding: 8px; margin: 4px 4px 4px 0; }
+  button { background: #4f46e5; color: #fff; border: 0; border-radius: 4px; cursor: pointer; }
+  button.danger { background: #dc2626; }
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+  th, td { border-bottom: 1px solid #ddd; padding: 8px; text-align: left; }
+  #message { padding: 10px; margin-bottom: 12px; border-radius: 4px; display: none; }
+  .ok { background: #dcfce7; }
+  .err { background: #fee2e2; }
+</style>
+</head>
+<body>
+<header><h2>Student Information and Task Management System</h2></header>
+<main>
+  <div id="message"></div>
+
+  <section>
+    <h3>Students</h3>
+    <input id="sNumber" placeholder="Student number">
+    <input id="sName" placeholder="Full name">
+    <input id="sEmail" placeholder="Email">
+    <input id="sCourse" placeholder="Course">
+    <button id="studentBtn" onclick="saveStudent()">Add Student</button>
+    <button onclick="resetStudentForm()">Clear</button>
+    <table>
+      <thead><tr><th>ID</th><th>Number</th><th>Name</th><th>Email</th><th>Course</th><th>Actions</th></tr></thead>
+      <tbody id="studentRows"></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h3>Tasks</h3>
+    <input id="tTitle" placeholder="Task title">
+    <input id="tDesc" placeholder="Description">
+    <input id="tDeadline" type="date">
+    <button onclick="saveTask()">Add Task</button>
+    <table>
+      <thead><tr><th>ID</th><th>Title</th><th>Description</th><th>Deadline</th><th>Actions</th></tr></thead>
+      <tbody id="taskRows"></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h3>Submission Monitoring</h3>
+    <select id="subStudent"></select>
+    <select id="subTask"></select>
+    <input id="subDate" type="date">
+    <button onclick="recordSubmission()">Record Submission</button>
+    <button onclick="showReport()">View Report</button>
+    <div id="report"></div>
+  </section>
+</main>
+
+<script>
+const val = id => document.getElementById(id).value;
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+async function api(url, method = "GET", body = null) {
+  const options = { method: method, headers: { "Content-Type": "application/json" } };
+  if (body) options.body = JSON.stringify(body);
+  const res = await fetch(url, options);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Request failed");
+  return data;
+}
+
+function show(msg, ok = true) {
+  const box = document.getElementById("message");
+  box.textContent = msg;
+  box.className = ok ? "ok" : "err";
+  box.style.display = "block";
+  setTimeout(() => (box.style.display = "none"), 3500);
+}
+
+let editingId = null;
+let studentsCache = [];
+
+async function loadStudents() {
+  studentsCache = await api("/api/students");
+  document.getElementById("studentRows").innerHTML = studentsCache.map(s =>
+    `<tr><td>${s.id}</td><td>${esc(s.student_number)}</td><td>${esc(s.name)}</td><td>${esc(s.email)}</td><td>${esc(s.course)}</td>
+     <td><button onclick="editStudent(${s.id})">Edit</button>
+     <button class="danger" onclick="deleteStudent(${s.id})">Delete</button></td></tr>`).join("");
+  document.getElementById("subStudent").innerHTML = studentsCache.map(s =>
+    `<option value="${s.id}">${esc(s.name)}</option>`).join("");
+}
+
+async function saveStudent() {
+  const body = { student_number: val("sNumber"), name: val("sName"), email: val("sEmail"), course: val("sCourse") };
+  try {
+    if (editingId) {
+      await api(`/api/students/${editingId}`, "PUT", body);
+      show("Student updated");
+    } else {
+      await api("/api/students", "POST", body);
+      show("Student added");
+    }
+    resetStudentForm();
+    await loadStudents();
+  } catch (e) { show(e.message, false); }
+}
+
+function editStudent(id) {
+  const s = studentsCache.find(x => x.id === id);
+  document.getElementById("sNumber").value = s.student_number;
+  document.getElementById("sName").value = s.name;
+  document.getElementById("sEmail").value = s.email;
+  document.getElementById("sCourse").value = s.course;
+  editingId = id;
+  document.getElementById("studentBtn").textContent = "Update Student";
+}
+
+function resetStudentForm() {
+  ["sNumber", "sName", "sEmail", "sCourse"].forEach(i => (document.getElementById(i).value = ""));
+  editingId = null;
+  document.getElementById("studentBtn").textContent = "Add Student";
+}
+
+async function deleteStudent(id) {
+  if (!confirm("Delete this student?")) return;
+  try { await api(`/api/students/${id}`, "DELETE"); show("Student deleted"); await loadStudents(); }
+  catch (e) { show(e.message, false); }
+}
+
+async function loadTasks() {
+  const tasks = await api("/api/tasks");
+  document.getElementById("taskRows").innerHTML = tasks.map(t =>
+    `<tr><td>${t.id}</td><td>${esc(t.title)}</td><td>${esc(t.description)}</td><td>${t.deadline}</td>
+     <td><button class="danger" onclick="deleteTask(${t.id})">Delete</button></td></tr>`).join("");
+  document.getElementById("subTask").innerHTML = tasks.map(t =>
+    `<option value="${t.id}">${esc(t.title)}</option>`).join("");
+}
+
+async function saveTask() {
+  const body = { title: val("tTitle"), description: val("tDesc"), deadline: val("tDeadline") };
+  try {
+    await api("/api/tasks", "POST", body);
+    show("Task added");
+    ["tTitle", "tDesc", "tDeadline"].forEach(i => (document.getElementById(i).value = ""));
+    await loadTasks();
+  } catch (e) { show(e.message, false); }
+}
+
+async function deleteTask(id) {
+  if (!confirm("Delete this task?")) return;
+  try { await api(`/api/tasks/${id}`, "DELETE"); show("Task deleted"); await loadTasks(); }
+  catch (e) { show(e.message, false); }
+}
+
+async function recordSubmission() {
+  const body = { student_id: Number(val("subStudent")), task_id: Number(val("subTask")), submitted_on: val("subDate") };
+  try {
+    const result = await api("/api/submissions", "POST", body);
+    show("Submission recorded: " + result.status);
+    await showReport();
+  } catch (e) { show(e.message, false); }
+}
+
+async function showReport() {
+  const taskId = val("subTask");
+  if (!taskId) return;
+  try {
+    const r = await api(`/api/tasks/${taskId}/report`);
+    const subs = await api(`/api/tasks/${taskId}/submissions`);
+    const rows = subs.map(s => {
+      const st = studentsCache.find(x => x.id === s.student_id);
+      return `<tr><td>${esc(st ? st.name : s.student_id)}</td><td>${s.submitted_on}</td><td>${s.status}</td></tr>`;
+    }).join("");
+    document.getElementById("report").innerHTML =
+      `<p><b>${esc(r.title)}</b>: ${r.submitted} of ${r.total_students} submitted (${r.completion_rate}%), ${r.pending} pending, ${r.late} late.</p>` +
+      `<table><thead><tr><th>Student</th><th>Date</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>`;
+  } catch (e) { show(e.message, false); }
+}
+
+(async function init() {
+  try { await loadStudents(); await loadTasks(); }
+  catch (e) { show(e.message, false); }
+})();
+</script>
+</body>
+</html>
